@@ -1,0 +1,476 @@
+---
+title: "Análise de dados - Irisa"
+output:
+  pdf_document: default
+  html_document: default
+date: "2025-04-29"
+---
+
+```{r setup, message=FALSE}
+
+library(readxl)
+library(psych)
+library(kableExtra)
+library(gt)
+library(knitr)
+library(dplyr)
+library(tidyr)
+library(tidyverse)
+library(nparLD)
+library(nparcomp)
+library(rstatix)
+library(effectsize)
+
+irisa <- read_excel("~/PedroOP/dados_Pedro.xlsx", sheet = 2)
+irisa <- as.data.frame(irisa[-3])
+head(irisa)
+```
+
+## **Descriptives statistics**
+
+```{r descritivas_tabela, tidy=TRUE, tidy.opts=list(width.cutoff=70)}
+# Pacotes são carregados no setup
+
+colunas_interesse_nomes <- c("Grupo", "Idade", "Sexo", "Estatura (m)",
+                             "Massa Corporal (Kg) Avaliação 1", "IMC avaliação 1",
+                             "IDATE-E_Sessão 1_Pré", "PANAS-SESSÃO 1_Pré_AFETO NEGATIVO",
+                             "PANAS-SESSÃO 1_Pré_AFETO POSITIVO")
+
+descritivas_gt <- irisa %>%
+  dplyr::select(all_of(colunas_interesse_nomes)) %>%
+  mutate(Grupo = factor(Grupo), Sexo = factor(Sexo)) %>%
+  group_by(Grupo) %>%
+  summarise(
+    N = n(), Idade_Media = mean(Idade, na.rm = TRUE), Idade_DP = sd(Idade, na.rm = TRUE),
+    Estatura_Media = mean(`Estatura (m)`, na.rm = TRUE), Estatura_DP = sd(`Estatura (m)`, na.rm = TRUE),
+    Massa_Media = mean(`Massa Corporal (Kg) Avaliação 1`, na.rm = TRUE), Massa_DP = sd(`Massa Corporal (Kg) Avaliação 1`, na.rm = TRUE),
+    IMC_Media = mean(`IMC avaliação 1`, na.rm = TRUE), IMC_DP = sd(`IMC avaliação 1`, na.rm = TRUE),
+    IDATE_Media = mean(`IDATE-E_Sessão 1_Pré`, na.rm = TRUE), IDATE_DP = sd(`IDATE-E_Sessão 1_Pré`, na.rm = TRUE),
+    PANAS_Neg_Media = mean(`PANAS-SESSÃO 1_Pré_AFETO NEGATIVO`, na.rm = TRUE), PANAS_Neg_DP = sd(`PANAS-SESSÃO 1_Pré_AFETO NEGATIVO`, na.rm = TRUE),
+    PANAS_Pos_Media = mean(`PANAS-SESSÃO 1_Pré_AFETO POSITIVO`, na.rm = TRUE), PANAS_Pos_DP = sd(`PANAS-SESSÃO 1_Pré_AFETO POSITIVO`, na.rm = TRUE),
+    Sexo_M_N = sum(Sexo == "M", na.rm = TRUE), Sexo_F_N = sum(Sexo == "F", na.rm = TRUE),
+    .groups = 'drop'
+  ) %>%
+  mutate(
+    Sexo_Total_N = Sexo_M_N + Sexo_F_N,
+    Sexo_M_Perc = ifelse(Sexo_Total_N > 0, (Sexo_M_N / Sexo_Total_N) * 100, 0),
+    Sexo_F_Perc = ifelse(Sexo_Total_N > 0, (Sexo_F_N / Sexo_Total_N) * 100, 0)
+  )
+
+descritivas_formatadas <- descritivas_gt %>%
+  mutate(
+    `Idade` = paste0(sprintf("%.2f", Idade_Media), " (", sprintf("%.2f", Idade_DP), ")"),
+    `Estatura (m)` = paste0(sprintf("%.2f", Estatura_Media), " (", sprintf("%.2f", Estatura_DP), ")"),
+    `Massa Corporal (Kg) Avaliação 1` = paste0(sprintf("%.2f", Massa_Media), " (", sprintf("%.2f", Massa_DP), ")"),
+    `IMC avaliação 1` = paste0(sprintf("%.2f", IMC_Media), " (", sprintf("%.2f", IMC_DP), ")"),
+    `IDATE-E_Sessão 1_Pré` = paste0(sprintf("%.2f", IDATE_Media), " (", sprintf("%.2f", IDATE_DP), ")"),
+    `PANAS-SESSÃO 1_Pré_AFETO NEGATIVO` = paste0(sprintf("%.2f", PANAS_Neg_Media), " (", sprintf("%.2f", PANAS_Neg_DP), ")"),
+    `PANAS-SESSÃO 1_Pré_AFETO POSITIVO` = paste0(sprintf("%.2f", PANAS_Pos_Media), " (", sprintf("%.2f", PANAS_Pos_DP), ")"),
+    `Sexo (Masc)` = paste0(Sexo_M_N, " (", sprintf("%.1f", Sexo_M_Perc), "%)"),
+    `Sexo (Fem)` = paste0(Sexo_F_N, " (", sprintf("%.1f", Sexo_F_Perc), "%)"),
+    N = as.character(N)
+  ) %>%
+  dplyr::select(
+    Grupo, N, `Idade`, `Estatura (m)`, `Massa Corporal (Kg) Avaliação 1`,
+    `IMC avaliação 1`, `IDATE-E_Sessão 1_Pré`, `PANAS-SESSÃO 1_Pré_AFETO NEGATIVO`,
+    `PANAS-SESSÃO 1_Pré_AFETO POSITIVO`, `Sexo (Masc)`, `Sexo (Fem)`
+  )
+
+descritivas_transposta <- descritivas_formatadas %>%
+  pivot_longer(
+    cols = -Grupo,
+    names_to = "Metrica",
+    values_to = "Valor" # Coluna de valores é "Valor"
+  ) %>%
+  pivot_wider(
+    names_from = Grupo,
+    values_from = Valor # <-- ESPECIFICA A COLUNA CORRETA
+  )
+
+kable(
+  descritivas_transposta,
+  format = "pipe",
+  caption = "", # Removido caption aqui para usar texto markdown abaixo
+  col.names = c("Métrica", "Grupo 1", "Grupo 2"),
+  align = 'l'
+)
+
+```
+##### *Valores para métricas contínuas apresentados como Média (DP). DP = Desvio Padrão. Valores para Sexo apresentados como N (%).*
+
+#### **Verificação sobre a distribuição dos dados**
+
+Dividindo os dados por grupo e testando a normalidade das variáveis
+
+```{r, normalidade, tidy=TRUE, tidy.opts=list(width.cutoff=70)}
+grupo1_data <- irisa[irisa$Grupo == 1, ] # Seleciona linhas onde Grupo é 1, e todas as colunas
+grupo2_data <- irisa[irisa$Grupo == 2, ] # Seleciona linhas onde Grupo é 2, e todas as colunas
+
+variaveis_numericas_teste <- c("Idade",
+                               "Estatura (m)",
+                               "Massa Corporal (Kg) Avaliação 1",
+                               "IMC avaliação 1",
+                               "IDATE-E_Sessão 1_Pré",
+                               "PANAS-SESSÃO 1_Pré_AFETO NEGATIVO",
+                               "PANAS-SESSÃO 1_Pré_AFETO POSITIVO")
+
+# --- Teste para o Grupo 1 ---
+
+resultados_shapiro_grupo1 <- lapply(variaveis_numericas_teste, function(nome_var) {
+  dados_coluna <- grupo1_data[[nome_var]]
+  dados_coluna_limpos <- na.omit(dados_coluna)
+  if (length(dados_coluna_limpos) >= 3) {
+    tryCatch({
+      shapiro.test(dados_coluna_limpos)
+    }, error = function(e) {
+      list(statistic = NA, p.value = NA, method = paste("Erro no Shapiro-Wilk para", nome_var, ":", e$message))
+    })
+  } else {
+    list(statistic = NA, p.value = NA, method = paste("Shapiro-Wilk: Pontos de dados insuficientes (<3) para", nome_var))
+  }
+})
+
+names(resultados_shapiro_grupo1) <- variaveis_numericas_teste
+
+# --- Teste para o Grupo 2 ---
+
+# Repetir o processo para o grupo 2
+resultados_shapiro_grupo2 <- lapply(variaveis_numericas_teste, function(nome_var) {
+  dados_coluna <- grupo2_data[[nome_var]]
+  dados_coluna_limpos <- na.omit(dados_coluna)
+  if (length(dados_coluna_limpos) >= 3) {
+    tryCatch({
+      shapiro.test(dados_coluna_limpos)
+    }, error = function(e) {
+      list(statistic = NA, p.value = NA, method = paste("Erro no Shapiro-Wilk para", nome_var, ":", e$message))
+    })
+  } else {
+    list(statistic = NA, p.value = NA, method = paste("Shapiro-Wilk: Pontos de dados insuficientes (<3) para", nome_var))
+  }
+})
+names(resultados_shapiro_grupo2) <- variaveis_numericas_teste
+
+# --- Visualizar os Resultados ---
+
+tabela_shapiro_g1 <- data.frame(
+  Variavel = names(resultados_shapiro_grupo1),
+  W_Statistic = sapply(resultados_shapiro_grupo1, function(x) ifelse(is.list(x) && !is.null(x$statistic), x$statistic, NA)),
+  P_Value = sapply(resultados_shapiro_grupo1, function(x) ifelse(is.list(x) && !is.null(x$p.value), x$p.value, NA)),
+  row.names = NULL # Remover nomes de linha automáticos
+)
+
+tabela_shapiro_g2 <- data.frame(
+  Variavel = names(resultados_shapiro_grupo2),
+  W_Statistic = sapply(resultados_shapiro_grupo2, function(x) ifelse(is.list(x) && !is.null(x$statistic), x$statistic, NA)),
+  P_Value = sapply(resultados_shapiro_grupo2, function(x) ifelse(is.list(x) && !is.null(x$p.value), x$p.value, NA)),
+  row.names = NULL
+)
+
+tabela_shapiro_combinada <- left_join(
+  tabela_shapiro_g1,
+  tabela_shapiro_g2,
+  by = "Variavel",           
+  suffix = c("_G1", "_G2")   
+)
+
+# Selecionar e Renomear colunas para a tabela final 
+tabela_shapiro_formatada <- tabela_shapiro_combinada %>%
+  dplyr::select(
+    Variavel,
+    W_Statistic_G1, P_Value_G1,
+    W_Statistic_G2, P_Value_G2
+  ) %>%
+  rename(
+    "W Grupo 1" = W_Statistic_G1,
+    "p Grupo 1" = P_Value_G1,
+    "W Grupo 2" = W_Statistic_G2,
+    "p Grupo 2" = P_Value_G2
+  )
+
+
+kable(
+  tabela_shapiro_formatada,
+  format = "pipe",  # Formato bom para visualização no console 
+  digits = 3,       # Número de casas decimais para os valores W e p
+  caption = "Resultados do Teste de Normalidade Shapiro-Wilk por Grupo",
+  # col.names pode ser omitido se você usou rename() como acima,
+  # caso contrário, use para definir os cabeçalhos:
+  # col.names = c("Variável", "W Grupo 1", "p Grupo 1", "W Grupo 2", "p Grupo 2")
+  align = c('l', 'c', 'c', 'c', 'c') # Alinhamento: l=left, c=center, r=right
+)
+
+
+
+```
+
+##### *Apenas estatura e Afetos negativos  não seguem uma distribuição normal.*
+
+```{r}
+tabela_contingencia <- table(irisa$Sexo, irisa$Grupo)
+fisher.test(tabela_contingencia)
+```
+##### *Não existe diferença estatisticamente significativa sobre quantidade de pessoas de cada sexo em cada grupo.*
+
+```{r, tidy=TRUE, tidy.opts=list(width.cutoff=70)}
+
+irisa <- irisa %>% mutate(Grupo = factor(Grupo))
+
+# Definir as variáveis
+vars_teste_t <- c("Idade", "Massa Corporal (Kg) Avaliação 1", "IMC avaliação 1",
+                  "IDATE-E_Sessão 1_Pré", "PANAS-SESSÃO 1_Pré_AFETO POSITIVO")
+vars_teste_wilcoxon <- c("Estatura (m)", "PANAS-SESSÃO 1_Pré_AFETO NEGATIVO")
+
+# Inicializar a lista
+resultados_testes <- list()
+
+# --- Loop Teste t ---
+for (variavel in vars_teste_t) {
+  formula_teste <- as.formula(paste0("`", variavel, "` ~ Grupo"))
+
+  teste_t_resultado <- irisa %>%
+    rstatix::t_test(formula = formula_teste, var.equal = FALSE) 
+
+  resultados_testes[[variavel]] <- data.frame(
+    Variavel = variavel,
+    Teste = "T-test",
+    Estatistica = paste0("t(", round(teste_t_resultado$df, 2), ") = ", round(teste_t_resultado$statistic, 2)),
+    P_Value = teste_t_resultado$p
+  )
+}
+
+# --- Loop Wilcoxon ---
+for (variavel in vars_teste_wilcoxon) {
+  formula_teste <- as.formula(paste0("`", variavel, "` ~ Grupo"))
+
+  wilcox_test_resultado <- irisa %>%
+    rstatix::wilcox_test(formula = formula_teste)
+
+  resultados_testes[[variavel]] <- data.frame(
+    Variavel = variavel,
+    Teste = "Mann-Whitney",
+    # Usar a estatística e p-valor do wilcox_test
+    Estatistica = paste0("W = ", wilcox_test_resultado$statistic),
+    P_Value = wilcox_test_resultado$p
+  )
+}
+
+# Combinar todos os resultados 
+tabela_resultados_finais <- bind_rows(resultados_testes)
+
+#Gerar a tabela com kable 
+kable(
+  tabela_resultados_finais,
+  format = "pipe",
+  digits = 3,
+  caption = "Resultados dos Testes de Comparação entre Grupos",
+  col.names = c("Variável", "Teste Aplicado", "Estatística", "Valor-p"),
+  align = c('l', 'l', 'c', 'c'),
+  rownames = FALSE 
+)
+
+
+```
+
+##### *Não existe diferença estatisticamente significativa entre os grupos no tempo 1.*
+
+
+
+#### **Teste sobre a distribuição dos dados entre as variáveis de interesse no tempo "pós"**
+
+##### *As variáveis de IDATE en todos os grupos seguem uma distribuição normal, o que não verdade para as outras variáveis.* 
+
+```{r}
+#IDATE
+shapiro.test(grupo1_data$`IDATE-E_Sessão 1_Pré`)
+shapiro.test(grupo1_data$`IDATE-E_Sessão 1_Pós`)
+shapiro.test(grupo2_data$`IDATE-E_Sessão 1_Pré`)
+shapiro.test(grupo2_data$`IDATE-E_Sessão 1_Pós`)
+
+#PANAS Positivos
+shapiro.test(grupo1_data$`PANAS-SESSÃO 1_Pré_AFETO POSITIVO`)
+shapiro.test(grupo1_data$`PANAS-SESSÃO 1_Pós_AFETO POSITIVO`)
+shapiro.test(grupo2_data$`PANAS-SESSÃO 1_Pré_AFETO POSITIVO`)
+shapiro.test(grupo2_data$`PANAS-SESSÃO 1_Pós_AFETO POSITIVO`)
+
+#PANAS Negativos
+shapiro.test(grupo1_data$`PANAS-SESSÃO 1_Pré_AFETO NEGATIVO`)
+shapiro.test(grupo1_data$`PANAS-SESSÃO 1_Pós_AFETO NEGATIVO`)
+shapiro.test(grupo2_data$`PANAS-SESSÃO 1_Pré_AFETO NEGATIVO`)
+shapiro.test(grupo2_data$`PANAS-SESSÃO 1_Pós_AFETO NEGATIVO`)
+
+```
+## **ANOVAs fatoriais de medidas repetidas**
+
+### **IDATE-E**
+
+```{r, IDATE_df, tidy=TRUE, tidy.opts=list(width.cutoff=70)}
+names(irisa)[names(irisa) == "Código"] <- "ID"
+
+
+data_long_idate <- irisa %>%
+  dplyr::select(
+    ID, Grupo,
+    `IDATE-E_Sessão 1_Pré`, `IDATE-E_Sessão 1_Pós`
+  ) %>%
+  pivot_longer(
+    cols = c(`IDATE-E_Sessão 1_Pré`, `IDATE-E_Sessão 1_Pós`), 
+    names_to = c(".value", "Tempo"), 
+    names_pattern = "(.*)_(Pré|Pós)$",
+    values_to = "Score" 
+                        
+  ) %>%
+  rename(Score = `IDATE-E_Sessão 1`) %>%
+  mutate(
+    Tempo = case_when(
+      Tempo == "Pré" ~ 1,
+      Tempo == "Pós" ~ 2,
+      TRUE ~ NA_real_
+    ),
+    ID = as.numeric(ID)
+  ) %>%
+  filter(!is.na(Score))
+
+str(data_long_idate)
+
+```
+
+##### *A ANOVA paramétrica não encontrou efeito da interação entre grupo e tempo nos escores para IDATE, apenas dentro dos grupos (pré e pós). *
+
+```{r}
+anova_idate_param <- anova_test(
+  data = data_long_idate,
+  dv = Score,            # Variável dependente
+  wid = ID,              # Identificador do sujeito 
+  between = Grupo,       # Fator entre-grupos
+  within = Tempo,        # Fator intra-sujeitos 
+  effect.size = "ges",   # Generalized Eta Squared
+  type = 3               # Tipo III SS
+)
+
+get_anova_table(anova_idate_param)
+
+
+```
+##### **Se quiser vasculhar dentros dos grupos, ambos tiveram diminuição estatisticamente significativa**
+
+```{r, post_hoc, tidy=TRUE, tidy.opts=list(width.cutoff=70)}
+posthoc_grupo_por_tempo <- data_long_idate %>%
+  group_by(Grupo) %>% 
+  t_test(Score ~ Tempo, paired = TRUE, var.equal = FALSE) %>% # Teste t 
+  adjust_pvalue(method = "bonferroni") # Ajusta p-valor para os 2 testes 
+
+print(posthoc_grupo_por_tempo)
+```
+### **PANAS** Afetos negativos
+
+##### **O mesmo aconteceu para PANAS, utilizando a ANOVA não paramétrica**
+
+```{r}
+data_long_panas_neg <- irisa %>%
+  dplyr::select(
+    ID, Grupo,
+    `PANAS-SESSÃO 1_Pré_AFETO NEGATIVO`, `PANAS-SESSÃO 1_Pós_AFETO NEGATIVO`
+  ) %>%
+  pivot_longer(
+    cols = -c(ID, Grupo),
+    names_to = "Nome_Original",
+    values_to = "Score"
+  ) %>%
+  mutate(
+    Tempo = case_when(
+      grepl("_Pré_", Nome_Original, fixed = TRUE) ~ 1,
+      grepl("_Pós_", Nome_Original, fixed = TRUE) ~ 2,
+      TRUE ~ NA_real_
+    ),
+    Variavel = "PANAS_AFETO NEGATIVO",
+    ID = as.numeric(ID)
+  ) %>%
+dplyr::select(ID, Grupo, Variavel, Tempo, Score) %>%
+filter(!is.na(Score) & !is.na(Tempo))
+
+
+mod_panas_neg <- nparLD(formula = Score ~ Tempo * Grupo,
+                        data = data_long_panas_neg,
+                        subject = data_long_panas_neg$ID, 
+                        description = FALSE
+                        )
+summary(mod_panas_neg)
+plot(mod_panas_neg)
+```
+
+##### **Dá pra "vasculhar" também. Verifica-se que em ambos os grupos houve uma diminuição estatisticamente significativa**
+
+```{r}
+
+data_long_panas_neg1 <- data_long_panas_neg[data_long_panas_neg$Grupo == 1, ] 
+data_long_panas_neg2 <- data_long_panas_neg[data_long_panas_neg$Grupo == 2, ] 
+
+posthoc_2x1_inter <- npar.t.test.paired(Score ~ Tempo, data_long_panas_neg1, 
+                                        conf.level = 0.95, 
+                                        alternative = c("two.sided"), plot=F)
+summary(posthoc_2x1_inter)
+
+posthoc_2x1_contr <- npar.t.test.paired(Score ~ Tempo, data_long_panas_neg2, 
+                                        conf.level = 0.95, 
+                                        alternative = c("two.sided"),plot=F)
+summary(posthoc_2x1_contr)
+```
+
+## **PANAS** Afetos positivos 
+
+```{r}
+data_long_panas_pos <- irisa %>%
+  dplyr::select(
+    ID, Grupo,
+    `PANAS-SESSÃO 1_Pré_AFETO POSITIVO`, `PANAS-SESSÃO 1_Pós_AFETO POSITIVO`
+  ) %>%
+  pivot_longer(
+    cols = -c(ID, Grupo),
+    names_to = "Nome_Original",
+    values_to = "Score"
+  ) %>%
+  mutate(
+    Tempo = case_when(
+      grepl("_Pré_", Nome_Original, fixed = TRUE) ~ 1,
+      grepl("_Pós_", Nome_Original, fixed = TRUE) ~ 2,
+      TRUE ~ NA_real_
+    ),
+    Variavel = "PANAS_AFETO POSITIVO",
+    ID = as.numeric(ID)
+  ) %>%
+dplyr::select(ID, Grupo, Variavel, Tempo, Score) %>%
+filter(!is.na(Score) & !is.na(Tempo))
+
+
+mod_panas_pos <- nparLD(formula = Score ~ Tempo * Grupo,
+                        data = data_long_panas_pos,
+                        subject = data_long_panas_pos$ID, 
+                        description = FALSE
+                        )
+summary(mod_panas_pos)
+plot(mod_panas_pos)
+```
+**Dá pra vasculhar também e verificar que em ambos os grupos houve uma diminuição estatisticamente significativa**
+
+```{r}
+
+data_long_panas_pos1 <- data_long_panas_pos[data_long_panas_pos$Grupo == 1, ] 
+data_long_panas_pos2 <- data_long_panas_pos[data_long_panas_pos$Grupo == 2, ] 
+
+posthoc_2x1_inter <- npar.t.test.paired(Score ~ Tempo, data_long_panas_pos1, 
+                                        conf.level = 0.95, 
+                                        alternative = c("two.sided"), plot=F)
+summary(posthoc_2x1_inter)
+
+posthoc_2x1_contr <- npar.t.test.paired(Score ~ Tempo, data_long_panas_pos2, 
+                                        conf.level = 0.95, 
+                                        alternative = c("two.sided"),plot=F)
+summary(posthoc_2x1_contr)
+```
+
+#### **Análise feita por Frederico Pedrosa**
+
+```{r}
+sessionInfo()
+```
+

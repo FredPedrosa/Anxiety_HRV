@@ -1,0 +1,914 @@
+---
+title: "Psychophysiological Effects of a Gong Music Intervention: A Pre-Post Analysis with an Controlled Trial"
+author: "Frederico Pedrosa"
+date: "`r format(Sys.Date(), '%Y-%m-%d')`"
+output:
+  pdf_document:
+    toc: true
+    toc_depth: 2
+    number_sections: true
+    latex_engine: xelatex  
+    highlight: tango
+  html_document:
+    toc: true
+    toc_float: true
+    number_sections: true
+    code_folding: hide
+    theme: cosmo
+    highlight: tango
+header-includes:
+  - \usepackage{placeins}
+
+---
+
+# **Preparing libraries and environment**
+
+All the tables were printed at the end of the PDF.
+
+```{r setup, libraries, message=FALSE, warning=FALSE}
+#-------------------------------------------------------------------------------
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE,
+                      fig.width = 8, fig.height = 6, fig.align = "center")
+
+# Packages
+library(readxl)
+library(dplyr)
+library(MASS)
+library(tidyr)
+library(stringr)     # For string manipulation (useful for renaming)
+library(gtsummary)   # For descriptive and regression tables
+library(geepack)
+library(emmeans)     # For post-hoc of GEEs
+library(effectsize)  # For effect sizes
+library(rstatix)     # For additional tests if necessary
+library(kableExtra)  # For tables (if not using gtsummary for everything)
+library(knitr)
+library(ggplot2)     # For graphics (optional, but recommended)
+library(WebPower)    # For power analysis
+library(conflicted)
+library(corrplot)    # For visualization
+library(correlation) # For a more complete approach with p-values (optional)
+library(olsrr)
+library(lm.beta)
+library(car)
+conflict_prefer("select", "dplyr")
+conflict_prefer("filter", "dplyr") # Good practice if using MASS too
+```
+
+
+## Introduction and initial data processing
+
+```{r}
+data_original <- read_excel("~/PedroOP/dados_Pedro.xlsx")
+df <- as.data.frame(data_original) # Remove 3rd row, convert to data.frame
+
+
+# Step 1: Ensure the ID column exists
+if ("Código" %in% names(df)) {
+  if (!"ID" %in% names(df)) {
+    df <- df %>% dplyr::rename(ID = `Código`) # Specify dplyr::rename
+    cat("Column 'Código' renamed to 'ID'.\n")
+  } else {
+    cat("Column 'ID' already exists. Column 'Código' also present, but not renamed over 'ID'.\n")
+  }
+} else if (!"ID" %in% names(df)) {
+  warning("Columns 'ID' or 'Código' not found. Creating 'ID' from row number.")
+  df <- df %>% dplyr::mutate(ID = row_number()) # Specify dplyr::mutate
+} else {
+  cat("Column 'ID' already present in the loaded dataframe.\n")
+}
+
+# Convert key columns to factors
+df <- df %>%
+  dplyr::mutate( # Specify dplyr::mutate
+    ID = factor(ID),
+    Group = factor(Grupo, levels = c(1, 2), labels = c("Experimental", "Control")), # Renamed 'Grupo' to 'Group'
+    Sex = case_when( # Renamed 'Sexo' to 'Sex'
+      as.character(Sexo) %in% c("M", "Masculino", "1") ~ "Male",
+      as.character(Sexo) %in% c("F", "Feminino", "2") ~ "Female",
+      TRUE ~ NA_character_
+    ),
+    Sex = factor(Sex)
+  )
+
+# AND THE ORIGINAL NAMES MUST EXACTLY MATCH YOUR FILE
+# This map defines how original (Portuguese) column names are mapped to shorter, English-based names.
+column_map <- list(
+  # Original T1 names from your df                           = # Short names
+  "Av1 DASS-21Depressão"                                   = "DASS_Dep",
+  "Av1 DASS-21Ansiedade"                                   = "DASS_Anx",
+  "Av1 DASS-21Estresse"                                    = "DASS_Str",
+  "Av 1 Reg. Emoc.Reavaliação Cognitiva"                   = "RegEmoc_ReavCog",  # Corrected space
+  "Av 1 Reg. Emoc.Supressão Emocional"                     = "RegEmoc_SupEmoc",  # Corrected space
+  "Av1 MAIA-BRPercebendo"                                  = "MAIA_Perceiving",
+  "Av1 MAIA-BRSem distração"                                = "MAIA_NoDistraction",
+  "Av1 MAIA-BRSem preocupação"                              = "MAIA_NoWorrying",
+  "Av1 MAIA-BRRegulação Atencional"                         = "MAIA_AttnRegulation",
+  "Av1 MAIA-BRConsciência Emocional"                        = "MAIA_EmoAwareness",
+  "Av1 MAIA-BRAutorregulação"                               = "MAIA_SelfRegulation",
+  "Av1 MAIA-BREscuta do corpo"                              = "MAIA_BodyListening",
+  "Av1 MAIA-BRConfiando"                                   = "MAIA_Trusting",
+  "Av1 ECOMCoping focado na emoção"                         = "ECOM_EmotionFocused",
+  "Av1 ECOMCoping focado no problema"                       = "ECOM_ProblemFocused",
+  "Av1 ECOMCoping focado na evitação/desligamento"          = "ECOM_Avoidance",
+  "Avaliação 1_  PNS index:"                               = "HRV_PNS",    # Corrected: underscore and two spaces
+  "Avaliação 1_  SNS index:"                               = "HRV_SNS",    # Corrected: underscore and two spaces
+  "Avaliação 1_  Stress index:"                            = "HRV_Stress", # Corrected: underscore and two spaces
+  "Avaliação 1_  Mean RR  (ms):"                           = "HRV_MeanRR", # Corrected: underscore, two spaces, and two spaces before (ms)
+  "Avaliação 1_  SDNN (ms):"                               = "HRV_SDNN",   # Corrected: underscore and two spaces
+  "Avaliação 1_  Mean HR (beats/min):"                     = "HRV_MeanHR", # Corrected: underscore and two spaces
+  "Avaliação 1_  RMSSD (ms):"                              = "HRV_RMSSD",  # Corrected: underscore and two spaces
+  "Avaliação 1_  pNNxx (%):"                               = "HRV_pNNxx",  # Corrected: underscore and two spaces
+  "Avaliação 1_ LF/HF ratio:...74"                         = "HRV_LFHF",   # Corrected: underscore
+
+  # Original T2 names from your df
+  "Av2 DASS-21Depressão"                                   = "DASS_Dep",
+  "Av2 DASS-21Ansiedade"                                   = "DASS_Anx",
+  "Av2 DASS-21Estresse"                                    = "DASS_Str",
+  "Av 2 Reg. Emoc.Reavaliação Cognitiva"                   = "RegEmoc_ReavCog",  # Corrected space
+  "Av 2 Reg. Emoc.Supressão Emocional"                     = "RegEmoc_SupEmoc",  # Corrected space
+  "Av2 MAIA-BRPercebendo"                                  = "MAIA_Perceiving",
+  "Av2 MAIA-BRSem distração"                                = "MAIA_NoDistraction",
+  "Av2 MAIA-BRSem preocupação"                              = "MAIA_NoWorrying",
+  "Av2 MAIA-BRRegulação Atencional"                         = "MAIA_AttnRegulation",
+  "Av2 MAIA-BRConsciência Emocional"                        = "MAIA_EmoAwareness",
+  "Av2 MAIA-BRAutorregulação"                               = "MAIA_SelfRegulation",
+  "Av2 MAIA-BREscuta do corpo"                              = "MAIA_BodyListening",
+  "Av2 MAIA-BRConfiando"                                   = "MAIA_Trusting",
+  "Av2 ECOMCoping focado na emoção"                         = "ECOM_EmotionFocused",
+  "Av2 ECOMCoping focado no problema"                       = "ECOM_ProblemFocused",
+  "Av2 ECOMCoping focado na evitação/desligamento"          = "ECOM_Avoidance",
+  "Avaliação 2_  PNS index:"                               = "HRV_PNS",    # Corrected: underscore and two spaces
+  "Avaliação 2_  SNS index:"                               = "HRV_SNS",    # Corrected: underscore and two spaces
+  "Avaliação 2_  Stress index:"                            = "HRV_Stress", # Corrected: underscore and two spaces
+  "Avaliação 2_  Mean RR  (ms):"                           = "HRV_MeanRR", # Corrected: underscore, two spaces, and two spaces before (ms)
+  "Avaliação 2_  SDNN (ms):"                               = "HRV_SDNN",   # Corrected: underscore and two spaces
+  "Avaliação 2_  Mean HR (beats/min):"                     = "HRV_MeanHR", # Corrected: underscore and two spaces
+  "Avaliação 2_  RMSSD (ms):"                              = "HRV_RMSSD",  # Corrected: underscore and two spaces
+  "Avaliação 2_  pNNxx (%):"                               = "HRV_pNNxx",  # Corrected: underscore and two spaces
+  "Avaliação 2_ LF/HF ratio:...129"                        = "HRV_LFHF"    # Corrected: underscore
+)
+
+# Rename columns in the main dataframe 'df'
+# Rename columns in the main dataframe 'df'
+for (original_name in names(column_map)) {
+  short_name_base <- column_map[[original_name]]
+  time_suffix <- ""
+
+  # Corrected conditions to identify T1 and T2 based on column_map keys
+  if (startsWith(original_name, "Av1") || startsWith(original_name, "Av 1 ") || startsWith(original_name, "Avaliação 1_")) {
+    time_suffix <- "_T1"
+  } else if (startsWith(original_name, "Av2") || startsWith(original_name, "Av 2 ") || startsWith(original_name, "Avaliação 2_")) {
+    time_suffix <- "_T2"
+  }
+
+  if (original_name %in% names(df)) {
+    new_col_name <- if (nchar(time_suffix) > 0) paste0(short_name_base, time_suffix) else short_name_base
+    
+    # Check if new_col_name would create a duplicate with an *existing different original column*
+    # This is a more advanced check, often not needed if map is well-designed
+    # but good for complex scenarios.
+    # For now, the direct assignment is usually okay if the map logic is sound.
+    names(df)[names(df) == original_name] <- new_col_name
+  } else {
+    warning(paste("Original column from map not found for renaming:", original_name))
+  }
+}
+
+# Unique short outcome names (base for .value in pivot_longer and for labels)
+unique_short_outcome_names <- unique(unname(unlist(column_map)))
+
+# Convert to numeric after renaming
+cols_to_numeric <- names(df)[str_detect(names(df), "_T[12]$")]
+df <- df %>% dplyr::mutate(across(all_of(cols_to_numeric), as.numeric))
+
+# Create long dataset
+df_long <- df %>%
+  pivot_longer(
+    cols = matches("_T[12]$"), # Use matches for more robust selection of T1/T2 columns
+    names_to = c(".value", "Time"),
+    # Updated pattern to capture the base name and the T1/T2 suffix
+    names_pattern = paste0("^(", paste(unique_short_outcome_names, collapse = "|"), ")_(T[12])$"),
+    values_drop_na = FALSE
+  ) %>%
+  dplyr::mutate(Time = factor(Time, levels = c("T1", "T2")))
+
+# Verify
+# head(df_long)
+# names(df_long) # Should have ID, Group, Sex, Age, ... then unique_short_outcome_names and Time column
+```
+
+# **Descriptive statistics and comparisons between groups (T1)**
+
+
+```{r descriptive_baseline}
+
+demographic_base_vars <- c(
+  "Idade", "Estatura (m)", "Massa Corporal (Kg) Avaliação 1", "IMC avaliação 1" 
+)
+
+
+demographic_vars_original_names <- c("Idade", "Estatura (m)", "Massa Corporal (Kg) Avaliação 1", "IMC avaliação 1")
+demographic_vars_english_names <- c("Age", "Height_m", "Weight_kg_T1", "BMI_T1") # Target names
+
+for(i in seq_along(demographic_vars_original_names)){
+    if(demographic_vars_original_names[i] %in% names(df)){
+        df <- df %>% dplyr::rename(!!demographic_vars_english_names[i] := !!sym(demographic_vars_original_names[i]))
+    }
+}
+demographic_base_vars_existing <- demographic_vars_english_names[demographic_vars_english_names %in% names(df)]
+
+
+outcome_vars_t1_renamed <- names(df)[str_detect(names(df), paste0("^(", paste(unique_short_outcome_names, collapse="|"), ")_T1$"))]
+outcome_vars_t1_renamed <- outcome_vars_t1_renamed[outcome_vars_t1_renamed %in% names(df)] # Ensure they exist
+
+cols_to_keep_for_df_t1 <- c(
+  "ID", "Group", "Sex",
+  demographic_base_vars_existing,
+  outcome_vars_t1_renamed
+)
+cols_to_keep_for_df_t1 <- unique(cols_to_keep_for_df_t1)
+cols_to_keep_for_df_t1 <- cols_to_keep_for_df_t1[cols_to_keep_for_df_t1 %in% names(df)]
+
+
+df_t1 <- df %>%
+  dplyr::select(all_of(cols_to_keep_for_df_t1)) %>%
+  dplyr::rename_with(~str_remove(., "_T1$"), .cols = all_of(outcome_vars_t1_renamed))
+
+
+demographics_for_gtsummary <- demographic_base_vars_existing[demographic_base_vars_existing %in% names(df_t1)]
+outcomes_for_gtsummary <- unique_short_outcome_names[unique_short_outcome_names %in% names(df_t1)]
+
+vars_for_gtsummary_final <- c(
+  demographics_for_gtsummary,
+  outcomes_for_gtsummary
+)
+vars_for_gtsummary_final <- unique(vars_for_gtsummary_final)
+vars_for_gtsummary_final <- vars_for_gtsummary_final[vars_for_gtsummary_final %in% names(df_t1)]
+
+table1_desc_baseline <- df_t1 %>%
+  dplyr::select(Group, Sex, all_of(vars_for_gtsummary_final)) %>%
+  tbl_summary(
+    by = Group,
+    type = list( # Specify type for problematic variables if any, e.g.
+      MAIA_NoDistraction ~ "continuous",
+      ECOM_Avoidance ~ "continuous"
+    ),
+    label = list( 
+      Age ~ "Age (years)", 
+      Height_m ~ "Height (m)",
+      Weight_kg_T1 ~ "Weight (kg, T1)",
+      BMI_T1 ~ "BMI (kg/m², T1)",
+      DASS_Dep ~ "DASS-21 Depression",
+      DASS_Anx ~ "DASS-21 Anxiety",
+      DASS_Str ~ "DASS-21 Stress",
+      RegEmoc_ReavCog ~ "Emot. Reg. Cognitive Reappraisal",
+      RegEmoc_SupEmoc ~ "Emot. Reg. Emotional Suppression",
+      MAIA_Perceiving ~ "MAIA Perceiving",
+      MAIA_NoDistraction ~ "MAIA Not Distracting",
+      MAIA_NoWorrying ~ "MAIA Not Worrying",
+      MAIA_AttnRegulation ~ "MAIA Attention Regulation",
+      MAIA_EmoAwareness ~ "MAIA Emotional Awareness",
+      MAIA_SelfRegulation ~ "MAIA Self-Regulation",
+      MAIA_BodyListening ~ "MAIA Body Listening",
+      MAIA_Trusting ~ "MAIA Trusting",
+      ECOM_EmotionFocused ~ "ECOM Emotion-Focused Coping",
+      ECOM_ProblemFocused ~ "ECOM Problem-Focused Coping",
+      ECOM_Avoidance ~ "ECOM Avoidance Coping",
+      HRV_PNS ~ "HRV PNS Index",
+      HRV_SNS ~ "HRV SNS Index",
+      HRV_Stress ~ "HRV Stress Index",
+      HRV_MeanRR ~ "HRV Mean RR (ms)",
+      HRV_SDNN ~ "HRV SDNN (ms)",
+      HRV_MeanHR ~ "HRV Mean HR (bpm)",
+      HRV_RMSSD ~ "HRV RMSSD (ms)",
+      HRV_pNNxx ~ "HRV pNNxx (%)",
+      HRV_LFHF ~ "HRV LF/HF Ratio"
+    ),
+    statistic = list(
+      all_continuous() ~ "{mean} ({sd})",
+      all_categorical() ~ "{n} ({p}%)"
+    ),
+    digits = all_continuous() ~ 2,
+    missing_text = "(Missing)"
+  ) %>%
+  add_p(test = list(all_continuous() ~ "t.test", all_categorical() ~ "fisher.test"),
+        pvalue_fun = ~style_pvalue(., digits = 3)) %>%
+  add_overall() %>%
+  modify_header(
+    label = "**Characteristic (Time 1)**",
+    p.value = "**p-value**",
+    stat_0 = "**Total (N = {N})**"
+  ) %>%
+  modify_caption("**Table 1. Baseline Characteristics (Time 1) of Participants by Group**") %>%
+  bold_labels()
+
+table1_desc_baseline
+```
+
+### *There are statistically significant differences between the two groups at time 1 regarding Body Listening and RR Intervals (interval between two consecutive heartbeats), which vary by 50 milliseconds*
+
+
+# **Analysis of Intervention Effects (GEE)**
+
+Generalized Estimating Equation (GEE) models were used to analyze the effect of intervention (Group), Time, and Group*Time interaction on each outcome variable. A first-order autoregressive (AR1) correlation structure was used to model the correlation between repeated measures within each participant.
+
+
+```{r gee_analysis_loop, results='asis', echo=TRUE, warning=FALSE, message=FALSE}
+
+escape_latex_underscores_for_caption <- function(text) {
+  if (is.null(text) || length(text) == 0) return(text)
+  if (knitr::is_latex_output()) {
+    text_escaped_backslash <- gsub("\\", "\\textbackslash{}", text, fixed = TRUE) 
+    return(gsub("_", "\\_", text_escaped_backslash, fixed = TRUE))
+  }
+  return(text)
+}
+
+gee_anova_results_list <- list()
+gee_models_list <- list()
+
+# Ensure unique_short_outcome_names is defined from your previous data prep chunk
+# For example: unique_short_outcome_names <- unique(unname(unlist(column_map)))
+# This line assumes it's already available in your environment.
+
+outcome_vars_for_loop <- unique_short_outcome_names[unique_short_outcome_names %in% names(df_long)]
+
+cat("\n\n## Analysis of Intervention Effects (GEE)\n")
+cat("\nGeneralized Estimating Equation (GEE) models were used to analyze the effect of the intervention.\n")
+
+for (outcome_variable_name in outcome_vars_for_loop) {
+  outcome_variable_name_for_display <- escape_latex_underscores_for_caption(outcome_variable_name)
+  cat(paste0("\n\n### Processing GEE for: ", outcome_variable_name_for_display, "\n"))
+  df_long_current_outcome <- df_long %>% dplyr::filter(!is.na(!!sym(outcome_variable_name)))
+
+  id_counts_per_time <- df_long_current_outcome %>%
+    dplyr::group_by(ID, Time) %>%
+    dplyr::summarise(n_obs = n(), .groups = 'drop_last') %>%
+    dplyr::summarise(n_times = n_distinct(Time), .groups = 'drop')
+  n_pairs_possible <- sum(id_counts_per_time$n_times == 2)
+
+  cat(paste0("  Participants with data for '", outcome_variable_name_for_display, "': ", length(unique(df_long_current_outcome$ID)), "\n"))
+  cat(paste0("  Participants with data at BOTH T1 and T2 for '", outcome_variable_name_for_display, "': ", n_pairs_possible, "\n"))
+
+  if (n_pairs_possible < 2 || length(unique(df_long_current_outcome$Group)) < 2 || length(unique(df_long_current_outcome$Time)) < 2) {
+    cat("  -> Insufficient data or lack of variation. GEE model not fitted.\n")
+    # Store NA results if needed
+    gee_anova_results_list[[outcome_variable_name]] <- data.frame(Term = "N/A", Df = NA, Chi.sq = NA, P.value = NA)
+    gee_models_list[[outcome_variable_name]] <- "Insufficient data"
+    next
+  }
+  formula_gee_loop <- as.formula(paste(outcome_variable_name, "~ Time * Group"))
+  cat("  Adjusting GEE model...\n")
+  model_gee_object <- try(geeglm(formula = formula_gee_loop, id = ID, data = df_long_current_outcome,
+                                 family = gaussian(), corstr = "ar1"), silent = TRUE)
+  if (inherits(model_gee_object, "try-error")) {
+    cat(paste0("  ERROR in geeglm for '", outcome_variable_name_for_display, "': ", as.character(model_gee_object), "\n"))
+    gee_anova_results_list[[outcome_variable_name]] <- data.frame(Term = "GEE Error", Df = NA, Chi.sq = NA, P.value = NA)
+    gee_models_list[[outcome_variable_name]] <- as.character(model_gee_object)
+    next
+  }
+  cat("  GEE model fitted successfully.\n")
+  gee_models_list[[outcome_variable_name]] <- model_gee_object
+  cat("  Calculating anova(model_gee)...\n")
+  anova_results_object <- try(anova(model_gee_object), silent = TRUE)
+  if (inherits(anova_results_object, "try-error")) {
+    cat(paste0("  ERROR in anova(model_gee) for '", outcome_variable_name_for_display, "': ", as.character(anova_results_object), "\n"))
+    gee_anova_results_list[[outcome_variable_name]] <- data.frame(Term = "Anova Error", Df = NA, Chi.sq = NA, P.value = NA)
+    next
+  }
+  cat("  Anova calculated successfully.\n")
+  summary_df_raw <- as.data.frame(anova_results_object)
+  p_col_name_actual <- NULL; chi_sq_col_name_actual <- NULL
+  possible_p_names <- c("P(>|Chi|)", "Pr(>Chi)", "Pr(>|W|)", "Pr(>|F|)", "p.value", "Pr(>F)")
+  possible_chi_sq_names <- c("X2", "Wald", "Chi.sq", "F value", "F")
+  for (p_name in possible_p_names) { if (p_name %in% names(summary_df_raw)) { p_col_name_actual <- p_name; break } }
+  for (chi_name in possible_chi_sq_names) { if (chi_name %in% names(summary_df_raw)) { chi_sq_col_name_actual <- chi_name; break } }
+  if (is.null(p_col_name_actual) || is.null(chi_sq_col_name_actual) || !"Df" %in% names(summary_df_raw)) {
+    cat(paste0("  ERROR: Essential ANOVA columns not found for '", outcome_variable_name_for_display, "'.\n"))
+    gee_anova_results_list[[outcome_variable_name]] <- data.frame(Term = rownames(summary_df_raw), Df = NA, Chi.sq = NA, P.value = NA) # Store what we have
+    next
+  }
+  summary_df_processed <- summary_df_raw %>%
+    dplyr::mutate(Original_Term = rownames(.)) %>%
+    dplyr::select(Original_Term, Df, Chi_sq_val = all_of(chi_sq_col_name_actual), P_value = all_of(p_col_name_actual)) %>%
+    dplyr::mutate(Significance = case_when(P_value < 0.001 ~ "***", P_value < 0.01  ~ "**", P_value < 0.05  ~ "*", P_value < 0.1   ~ ".", TRUE ~ ""))
+  gee_anova_results_list[[outcome_variable_name]] <- summary_df_processed # Store processed results
+
+  summary_df_for_kable <- summary_df_processed %>%
+    dplyr::transmute(Term = Original_Term, Df, `Chi-squared` = Chi_sq_val, `Pr(>Chi-sq)` = P_value, Sig = Significance)
+  caption_text_gee <- paste("Wald Test Results (GEE) for", outcome_variable_name_for_display)
+  kable_format <- knitr::opts_knit$get("rmarkdown.pandoc.to"); if (is.null(kable_format)) kable_format <- "pipe"
+  anova_table <- knitr::kable(summary_df_for_kable, caption = caption_text_gee, digits = 3, format = kable_format, escape = FALSE)
+  if (knitr::is_latex_output()) { anova_table <- anova_table %>% kable_styling(latex_options = c("hold_position", "repeat_header"), full_width = FALSE) } 
+  else if (knitr::is_html_output()) { anova_table <- anova_table %>% kable_styling(bootstrap_options = c("striped", "hover", "condensed"), full_width = FALSE) }
+  print(anova_table)
+
+  interaction_p_value <- NA
+  # Robustly find the interaction term ("Time:Group" or "Time:Grupo")
+  time_group_term_index <- which(summary_df_processed$Original_Term %in% c("Time:Group", "Time:Grupo"))
+  
+  if (length(time_group_term_index) == 1) {
+      interaction_p_value <- summary_df_processed$P_value[time_group_term_index]
+  } else if (length(time_group_term_index) > 1) {
+      interaction_p_value <- summary_df_processed$P_value[time_group_term_index[summary_df_processed$Original_Term[time_group_term_index] == "Time:Group"][1]] # Prioritize "Time:Group"
+      if(is.na(interaction_p_value)) interaction_p_value <- summary_df_processed$P_value[time_group_term_index[1]] # Fallback to first if "Time:Group" not found among them
+      cat(paste0("  WARNING: Multiple potential Time:Group interaction terms found for p-value for ", outcome_variable_name_for_display, ". Using determined match.\n"))
+  } else {
+      cat(paste0("  INFO: Time:Group interaction term not found for p-value for ", outcome_variable_name_for_display, ".\n"))
+  }
+
+  is_significant_interaction <- length(interaction_p_value) == 1 && !is.na(interaction_p_value) && interaction_p_value < 0.10
+
+  if (is_significant_interaction) {
+    cat(paste0("\n\n#### Post-Hoc Analysis for ", outcome_variable_name_for_display,
+               " (Interaction Time:Group p=", round(interaction_p_value, 3), ")\n"))
+    cat("\n**Comparison T1 vs. T2 within each Group (emmeans):**\n")
+    emm_contrasts_df <- tryCatch({
+        emm_time_by_group <- emmeans(model_gee_object, ~ Time | Group, data = df_long_current_outcome)
+        contrasts_time <- pairs(emm_time_by_group, adjust = "bonferroni")
+        as.data.frame(contrasts_time)
+    }, error = function(e) {
+        cat(paste0("  ERROR generating emmeans contrasts for ", outcome_variable_name_for_display, ": ", e$message, "\n")); return(NULL) })
+    if (!is.null(emm_contrasts_df) && nrow(emm_contrasts_df) > 0) {
+        caption_emmeans_text <- paste("T1-T2 Differences by Group (emmeans) for", outcome_variable_name_for_display)
+        kable_format_emmeans <- knitr::opts_knit$get("rmarkdown.pandoc.to"); if (is.null(kable_format_emmeans)) kable_format_emmeans <- "pipe" 
+        kable_object_for_emmeans <- knitr::kable(emm_contrasts_df, digits = 3, format = kable_format_emmeans, caption = caption_emmeans_text, escape = FALSE)
+        if (knitr::is_latex_output()) { kable_object_for_emmeans <- kable_object_for_emmeans %>% kable_styling(latex_options = c("hold_position", "repeat_header"), full_width = FALSE) } 
+        else if (knitr::is_html_output()) { kable_object_for_emmeans <- kable_object_for_emmeans %>% kable_styling(bootstrap_options = c("striped", "hover", "condensed"), full_width = FALSE) }
+        cat("\n"); cat(knitr::knit_print(kable_object_for_emmeans)); cat("\n")
+    } else { cat(paste0("  No emmeans contrasts data to display or error occurred for ", outcome_variable_name_for_display, ".\n")) }
+
+    # --- Effect Size Calculation Block (Correctly nested) ---
+    cat("\n--- Attempting Effect Size Calculation (since interaction is significant) --- \n") 
+    for (g_level in levels(df_long_current_outcome$Group)) {
+      data_group_time_current <- df_long_current_outcome %>% dplyr::filter(Group == g_level)
+      cat(paste0("\n  Processing effect size for Group: '", g_level, "' on '", outcome_variable_name_for_display, "'\n"))
+      if (n_distinct(data_group_time_current$Time) == 2 && sum(!is.na(data_group_time_current[[outcome_variable_name]])) >= 3 * 2) {
+          cat(paste0("    Data seems sufficient for Group '", g_level, "'.\n"))
+          diff_data_es <- NULL
+          tryCatch({
+            diff_data_es <- data_group_time_current %>%
+              dplyr::select(ID, Time, all_of(outcome_variable_name)) %>% 
+              tidyr::pivot_wider(names_from = Time, values_from = all_of(outcome_variable_name), id_cols = ID) %>%
+              dplyr::mutate(Diff = T2 - T1) %>% dplyr::filter(!is.na(Diff))
+            # cat("      Pivot wider for differences successful. Nrow diff_data_es: ", nrow(diff_data_es), "\n")
+          }, error = function(e) { cat("      Error pivoting data for effect size: ", e$message, "\n") })
+          if (!is.null(diff_data_es) && nrow(diff_data_es) >= 3) {
+            # cat("      Proceeding with Shapiro test and effect size...\n")
+            shapiro_diff_es <- shapiro.test(diff_data_es$Diff)
+            cat(paste0("      Normality of differences (Shapiro-Wilk): W=", round(shapiro_diff_es$statistic,3), ", p=", round(shapiro_diff_es$p.value,3), "\n"))
+            formula_es <- as.formula(paste(outcome_variable_name, "~ Time"))
+            # cat(paste0("      Effect size formula: ", deparse(formula_es), "\n"))
+            sd_is_zero <- FALSE
+            if (nrow(diff_data_es) >= 2) { sd_is_zero <- (sd(diff_data_es$Diff, na.rm = TRUE) == 0) }
+            if (nrow(diff_data_es) < 2) { cat("      Insufficient complete paired data (N_diff < 2) for Hedges' g.\n")
+            } else if (sd_is_zero) { cat("      Variance of differences is zero. Hedges' g cannot be calculated.\n")
+            } else {
+                if (shapiro_diff_es$p.value > 0.05){ 
+                    # cat("      Attempting Hedges' g (normal diffs)...\n")
+                    effect_g_calc <- try(effectsize::hedges_g(formula_es, data = data_group_time_current), silent = FALSE)
+                    if(!inherits(effect_g_calc, "try-error")) { 
+                        print(effect_g_calc) 
+                        print(effectsize::interpret_hedges_g(effect_g_calc$Hedges_g)) 
+                    } else { cat("        Error calculating Hedges' g: ", as.character(effect_g_calc), "\n") }
+                } else { 
+                    # cat("      Attempting Rank Biserial (non-normal diffs)...\n")
+                    effect_r_calc <- try(effectsize::rank_biserial(formula_es, data = data_group_time_current), silent = FALSE)
+                    if(!inherits(effect_r_calc, "try-error")) {
+                        print(effect_r_calc) 
+                        print(effectsize::interpret_rank_biserial(effect_r_calc$r_rank_biserial))
+                    } else { cat("        Error calculating rank_biserial r: ", as.character(effect_r_calc), "\n") }
+                }
+            }
+          } else { cat(paste0("      Not enough data (N_diff < 3 or pivot error) for Shapiro test/effect size for Group '", g_level, "'.\n")) }
+      } else { cat(paste0("    Insufficient data (distinct times or total NAs) for effect size for Group '", g_level, "'.\n")) }
+    } 
+    # cat("--- Finished Effect Size Calculation Attempt --- \n") # This can be removed or kept
+  } # End of is_significant_interaction check
+}
+
+```
+
+### *Interpretation of GEEs*
+
+GEE analyses revealed statistically significant Time*Group interactions for Depression (DASS-21) (Wald χ²(1) = 8.104, p = 0.004) and Self-Regulation (MAIA) (Wald χ²(1) = 16.971, p = 0.001). Post-hoc analyses indicated that the experimental group showed a significant reduction in depression scores and a significant increase in self-regulation scores between Time 1 and Time 2, changes not observed in the control group.
+
+For Stress (DASS-21) (Wald χ²(1) = 3.369, p = 0.066) and Attentional Regulation (MAIA) (Wald χ²(1) = 2.900, p = 0.089), the Time*Group interaction showed a trend towards significance). Post-hoc analyses for these variables also demonstrated significant improvements (stress reduction and increased attentional regulation, respectively) only in the experimental group. The lack of complete statistical significance for the interaction in these cases may be partly attributed to the limited sample size, but the observed patterns suggest a differential effect of the intervention. In summary, GEE results and subsequent analyses indicate that the gong music therapy intervention was associated with significant improvements in depression, interoceptive self-regulation, and, with a trend towards significance, in stress and attentional regulation, when compared to the control group."
+
+# **Correlations between Variations (Deltas T2-T1) in the Experimental Group**
+
+To explore how changes in different variables interrelate within the experimental group, a Spearman correlation analysis was conducted on the deltas (difference between Time 2 and Time 1 scores) of all psychometric, emotional regulation, interoceptive (MAIA), music coping (ECOM), and heart rate variability (HRV) measures. Given the small sample size of the experimental group (N=11), the focus of this exploratory analysis was on the magnitude and direction of correlation coefficients (rho), rather than statistical significance (p-values), which is highly sensitive to sample size in correlational analyses. Moderate to strong correlations were considered indicative of potentially interesting relationships for future investigation. Visualization of these correlations was performed using a heatmap.
+
+```{r correlation_matrix_delta_g1, results='asis', echo=FALSE, warning=FALSE, message=FALSE}
+# Ensure 'df' is the fully prepared dataframe from previous chunks
+# Ensure 'unique_short_outcome_names' is defined from your column_map
+
+# --- Helper function for escaping LaTeX special characters in captions ---
+escape_latex_for_caption <- function(text) {
+  if (is.null(text) || length(text) == 0) return(text)
+  if (knitr::is_latex_output()) {
+    text <- gsub("\\\\", "\\\\textbackslash{}", text, fixed = TRUE) # Must be first
+    text <- gsub("_", "\\_", text, fixed = TRUE)
+    text <- gsub("%", "\\%", text, fixed = TRUE)
+    text <- gsub("&", "\\&", text, fixed = TRUE)
+    text <- gsub("#", "\\#", text, fixed = TRUE)
+    text <- gsub("\\$", "\\$", text, fixed = TRUE)
+    text <- gsub("\\{", "\\{", text, fixed = TRUE)
+    text <- gsub("\\}", "\\}", text, fixed = TRUE)
+    text <- gsub("~", "\\~{}", text, fixed = TRUE)
+    text <- gsub("\\^", "\\^{}", text, fixed = TRUE)
+  }
+  return(text)
+}
+
+# --- Delta Calculation ---
+df_g1_for_delta <- df %>%
+  dplyr::filter(Group == "Experimental")
+
+df_deltas_g1 <- data.frame(ID = df_g1_for_delta$ID)
+created_delta_column_names <- character() # Tracks successfully created delta columns
+
+# Define the mapping from base outcome names to short delta names
+# (This part assumes unique_short_outcome_names is correctly populated)
+if (!exists("unique_short_outcome_names") || length(unique_short_outcome_names) == 0) {
+  stop("ERROR: 'unique_short_outcome_names' is not defined or is empty. Please ensure it's created from your 'column_map' in the data preparation chunk.")
+}
+abbreviated_name_map_delta <- setNames(
+  paste0("d", sapply(strsplit(unique_short_outcome_names, "_"), function(x) paste0(substr(x, 1, 1), collapse=""))), 
+  unique_short_outcome_names
+)
+# Apply your manual overrides (ensure these match your exact unique_short_outcome_names):
+abbreviated_name_map_delta["DASS_Dep"] <- "dDASS_D"
+abbreviated_name_map_delta["DASS_Anx"] <- "dDASS_A"
+abbreviated_name_map_delta["DASS_Str"] <- "dDS" 
+abbreviated_name_map_delta["RegEmoc_ReavCog"] <- "dRR" 
+abbreviated_name_map_delta["RegEmoc_SupEmoc"] <- "dRS" 
+abbreviated_name_map_delta["MAIA_Perceiving"] <- "dMP"
+abbreviated_name_map_delta["MAIA_NoDistraction"] <- "dMND"
+abbreviated_name_map_delta["MAIA_NoWorrying"] <- "dMNW"
+abbreviated_name_map_delta["MAIA_AttnRegulation"] <- "dMA" 
+abbreviated_name_map_delta["MAIA_EmoAwareness"] <- "dME"   
+abbreviated_name_map_delta["MAIA_SelfRegulation"] <- "dMS"
+abbreviated_name_map_delta["MAIA_BodyListening"] <- "dMB"
+abbreviated_name_map_delta["MAIA_Trusting"] <- "dMT"
+abbreviated_name_map_delta["ECOM_EmotionFocused"] <- "dEE"
+abbreviated_name_map_delta["ECOM_ProblemFocused"] <- "dEP"
+abbreviated_name_map_delta["ECOM_Avoidance"] <- "dEA"
+abbreviated_name_map_delta["HRV_PNS"] <- "dHP"
+abbreviated_name_map_delta["HRV_SNS"] <- "dHSN"
+abbreviated_name_map_delta["HRV_Stress"] <- "dHS"  
+abbreviated_name_map_delta["HRV_MeanRR"] <- "dHRR"
+abbreviated_name_map_delta["HRV_SDNN"] <- "dHSD"
+abbreviated_name_map_delta["HRV_MeanHR"] <- "dHHR"
+abbreviated_name_map_delta["HRV_RMSSD"] <- "dHR" 
+abbreviated_name_map_delta["HRV_pNNxx"] <- "dHp"
+abbreviated_name_map_delta["HRV_LFHF"] <- "dHL"
+
+if (anyDuplicated(unname(abbreviated_name_map_delta))) {
+  warning("Duplicate short delta names generated in 'abbreviated_name_map_delta'. This will cause issues. Review overrides.")
+  print(abbreviated_name_map_delta[duplicated(unname(abbreviated_name_map_delta)) | duplicated(unname(abbreviated_name_map_delta), fromLast=TRUE)])
+}
+
+cat("\nCalculating Deltas (T2-T1) for Experimental Group:\n") # This cat() is fine
+legend_names_list <- list()
+
+for (base_name in unique_short_outcome_names) {
+  col_t1 <- paste0(base_name, "_T1")
+  col_t2 <- paste0(base_name, "_T2")
+
+  delta_col_name <- abbreviated_name_map_delta[[base_name]]
+  if(is.null(delta_col_name)) {
+      warning(paste("No short delta name found in map for base_name:", base_name, "- using fallback."))
+      delta_col_name <- paste0("d", base_name)
+  }
+
+  if (col_t1 %in% names(df_g1_for_delta) && col_t2 %in% names(df_g1_for_delta)) {
+    val_t1 <- as.numeric(df_g1_for_delta[[col_t1]])
+    val_t2 <- as.numeric(df_g1_for_delta[[col_t2]])
+    df_deltas_g1[[delta_col_name]] <- val_t2 - val_t1
+    
+    if (!(delta_col_name %in% created_delta_column_names)) {
+        created_delta_column_names <- c(created_delta_column_names, delta_col_name)
+    } # else: means delta_col_name was already added, implies duplicate generation
+    
+    legend_names_list[[delta_col_name]] <- paste0(
+      escape_latex_for_caption(delta_col_name), # Escape for legend display
+      " = Delta (T2-T1) for ", 
+      escape_latex_for_caption(base_name)
+    )
+  } else {
+    warning(paste("T1/T2 columns not found in df_g1_for_delta for base name:", base_name, "(Tried:", col_t1, ",", col_t2, ")"))
+  }
+}
+created_delta_column_names <- unique(created_delta_column_names) # Ensure unique names
+
+# --- Legend for Abbreviated Delta Variable Names ---
+if (length(legend_names_list) > 0) {
+  legend_df <- data.frame(
+    Abbreviation = names(legend_names_list), # These are already escaped if needed by previous step
+    Full_Description = unlist(legend_names_list),
+    stringsAsFactors = FALSE,
+    row.names = NULL
+  )
+  # For kable, it's better to escape the content *within* the dataframe if needed for LaTeX.
+  # The escape_latex_for_caption was applied when creating legend_names_list values.
+  
+  cat("\n\n**Legend for Abbreviated Delta Variable Names:**\n") # Markdown header
+
+  kable_format_legend <- knitr::opts_knit$get("rmarkdown.pandoc.to")
+  if (is.null(kable_format_legend)) kable_format_legend <- "pipe"
+
+  # When format is 'latex', kable's default escape=TRUE should handle underscores in data.
+  # When format is 'html' or 'pipe', escape=FALSE is generally fine for text.
+  legend_table_obj <- knitr::kable(
+    legend_df,
+    format = kable_format_legend,
+    caption = escape_latex_for_caption("Legend for Abbreviated Delta Names"),
+    escape = ifelse(kable_format_legend == "latex", TRUE, FALSE), # Let kable handle LaTeX escaping for cells
+    col.names = c("Abbreviation", "Full Description") # Nicer column names
+  )
+  
+  if (knitr::is_latex_output()) {
+    legend_table_obj <- legend_table_obj %>%
+      kableExtra::kable_styling(latex_options = c("striped", "hold_position", "repeat_header"), font_size = 9)
+  } else if (knitr::is_html_output()) {
+    legend_table_obj <- legend_table_obj %>%
+      kableExtra::kable_styling(bootstrap_options = c("striped", "hover", "condensed"), full_width = FALSE)
+  }
+  
+  # Using cat(knitr::knit_print()) as it was confirmed to work for other tables
+  cat(knitr::knit_print(legend_table_obj))
+  cat("\n") # Add a newline for spacing
+}
+# --- End Legend ---
+
+
+# --- Spearman Correlation Matrix ---
+if (length(created_delta_column_names) < 2) {
+  cat("Not enough successfully created delta columns to calculate a correlation matrix.\n")
+  df_deltas_g1_final <- NULL
+} else {
+  # Ensure all columns in created_delta_column_names exist in df_deltas_g1
+  existing_created_deltas <- created_delta_column_names[created_delta_column_names %in% names(df_deltas_g1)]
+  if (length(existing_created_deltas) < 2) {
+    cat("Fewer than 2 created delta columns exist in df_deltas_g1. Cannot proceed with correlation.\n")
+    df_deltas_g1_final <- NULL
+  } else {
+    df_deltas_g1_final <- df_deltas_g1 %>%
+      dplyr::select(all_of(existing_created_deltas)) # Select only successfully created and existing deltas
+    
+    # Remove columns that are all NA (if any)
+    cols_to_keep_after_na <- names(df_deltas_g1_final)[colSums(is.na(df_deltas_g1_final)) < nrow(df_deltas_g1_final)]
+    if (length(cols_to_keep_after_na) < 2) {
+      cat("Not enough valid (non-all-NA) delta columns to calculate a correlation matrix.\n")
+      df_deltas_g1_final <- NULL
+    } else {
+      df_deltas_g1_final <- df_deltas_g1_final[, cols_to_keep_after_na, drop = FALSE]
+
+      cat("\n\n## Correlation Matrix of Deltas (T2-T1) for the Experimental Group\n")
+      
+      cor_matrix_delta_g1_spearman <- cor(df_deltas_g1_final,
+                                          use = "pairwise.complete.obs",
+                                          method = "spearman")
+      
+      cor_matrix_delta_g1_rounded <- round(cor_matrix_delta_g1_spearman, 2)
+      
+      #cat("\n**Correlation Matrix (Spearman) - Standard R Printout:**\n")
+      #print(cor_matrix_delta_g1_rounded) # This is console output
+
+      # --- Plot with corrplot ---
+      # corrplot output is a plot, not text, so results='asis' doesn't directly apply in the same way
+      # It should just render the plot.
+      if (requireNamespace("corrplot", quietly = TRUE) && !is.null(df_deltas_g1_final) && ncol(df_deltas_g1_final) >=2 ) {
+        #cat("\n\n**Correlation Matrix Heatmap (Spearman):**\n") # Markdown header
+        # The plot itself will be generated. Adding newlines for spacing in Rmd.
+        # Printing the corrplot object explicitly can sometimes help in loops/programmatic contexts.
+        corrplot_obj <- corrplot::corrplot( 
+          cor_matrix_delta_g1_spearman,
+          method = "square", type = "lower", order = "hclust",
+          addCoef.col = "black", number.cex = 0.5, tl.col = "black",
+          tl.srt = 45, tl.cex = 0.8, diag = FALSE, cl.cex = 0.5,
+          mar = c(0,0,1,0), # Added a bit of top margin for a title if desired
+          title = "Spearman Correlation of Delta Scores"
+        )
+        # print(corrplot_obj) # Usually not needed if not in a function, but can be explicit.
+        cat("\n") # Add a newline for spacing after the plot area
+      }
+      # --- End corrplot ---
+
+      # --- Detailed Correlation Table with 'correlation' package ---
+      if (requireNamespace("correlation", quietly = TRUE) && !is.null(df_deltas_g1_final) && ncol(df_deltas_g1_final) >=2) {
+        cat("\n\n**Detailed Spearman Correlation Matrix:**\n")
+        
+        df_for_kable_corr_pkg <- NULL
+        tryCatch({
+          cor_table_delta_g1_spearman_pkg <- correlation::correlation(
+              df_deltas_g1_final,
+              method = "spearman",
+              p_adjust = "holm"
+          )
+          df_for_kable_corr_pkg <- as.data.frame(cor_table_delta_g1_spearman_pkg) %>%
+            dplyr::select(Parameter1, Parameter2, rho, CI_low, CI_high, p_holm = p) %>% # Ensure 'p' is correctly aliased
+            dplyr::rename(
+              Variable1 = Parameter1, Variable2 = Parameter2,
+              Spearman_rho = rho, CI_Lower = CI_low, CI_Upper = CI_high,
+              p_adjusted_holm = p_holm
+            )
+        }, error = function(e) {
+          cat("Error calculating correlations with 'correlation' package:", e$message, "\n")
+        })
+
+        if(!is.null(df_for_kable_corr_pkg) && nrow(df_for_kable_corr_pkg) > 0) {
+            kable_format_corr <- knitr::opts_knit$get("rmarkdown.pandoc.to")
+            if (is.null(kable_format_corr)) kable_format_corr <- "pipe"
+            
+            corr_detail_table <- knitr::kable(
+                df_for_kable_corr_pkg, 
+                caption=escape_latex_for_caption(""), 
+                digits=3, 
+                format=kable_format_corr,
+                escape = ifelse(kable_format_corr == "latex", TRUE, FALSE)
+            )
+
+            if (knitr::is_latex_output()) {
+                corr_detail_table <- corr_detail_table %>% kableExtra::kable_styling(latex_options = c("striped", "hold_position"), font_size=8)
+            } else if (knitr::is_html_output()) {
+                corr_detail_table <- corr_detail_table %>% kableExtra::kable_styling(bootstrap_options = c("striped", "hover", "condensed"), full_width = FALSE)
+            }
+            cat(knitr::knit_print(corr_detail_table)) # Use knit_print for this table too
+            cat("\n")
+        }
+      } else {
+        cat("\n'correlation' package not installed or no data for detailed table. Skipping.\n")
+      }
+      # --- End Detailed Correlation Table ---
+    }
+  }
+}
+```
+
+# **Exploratory Analysis of Predictors of Significant Changes in the Experimental Group (N=11)**
+
+After identifying outcome variables that showed significant improvement or a trend towards improvement in the experimental group as a result of the intervention (specifically, Depression, Stress, MAIA Self-Regulation, and MAIA Attentional Regulation, based on GEE and post-hoc analyses), this section explores which other changes (T2-T1 deltas) might predict these improvements.
+
+For each of these four outcome variables (treated as dependent variables in their delta form), multiple linear regression models were fitted. Given the exploratory nature and limited sample size (N=11), a backward predictor selection approach based on p-value was employed, starting from an initial set of predictors that showed > |0.40| correlation in the previous analysis. 
+The final selected models were evaluated for fit (R² adjusted, F-statistic significance) and their coefficients interpreted. Assumptions of linear regression (normality, homoscedasticity, and independence of residuals) were checked for the final models. Due to low statistical power, this analysis primarily aims to generate hypotheses about potential mechanisms of change inducedby the gong music therapy intervention in this specific group.
+
+## **Predictors of Depression**
+
+Regarding depression, a central finding was that an increase in the change in cognitive reappraisal from T1 to T2 was significantly associated with a greater reduction in depression symptoms (a more negative T2-T1 delta for depression), when controlling for the change in interoceptive trust (coefficient for Delta RegEmoc_ReavCog = -1.20, p = 0.019). This result suggests that enhancing the ability to cognitively reappraise situations may be an important therapeutic mechanism in reducing depressive symptomatology in this group.
+
+Interestingly, the relationship between the change in interoceptive trust (dMT) and depression proved more complex. When analyzed in isolation, the change in 'Trusting' did not show a significant association with the change in depression scores (p = 0.368). Similarly, the change in 'Cognitive Reappraisal', when analyzed in isolation, did not show a significant association (p = 0.1367). However, in the multiple regression model, a greater increase in interoceptive trust (Delta MAIA_Trusting) was associated with a less negative or even positive delta for depression (indicating less reduction or a slight increase in symptoms), after controlling for the change in cognitive reappraisal (coefficient dMT = 5.99, p = 0.040).
+
+This finding for 'Trusting' is counterintuitive and must be interpreted with extreme caution due to the small sample size. It might indicate that the "benefit" (or the nature of the change) of an increase in trust in one's own bodily sensations (dMT) could depend on the simultaneous development of other skills, such as cognitive reappraisal (dRR). **If the ability to cognitively reappraise does not accompany an increase in confidence in sensations, it is possible that an increased focus on these sensations, without tools to process them adaptively, may not be beneficial for depressive symptoms, and could even be problematic (for example, leading to a greater focus on negative sensations)**. More complex relationships or the influence of other unmeasured variables may be at play and warrant future investigation.
+
+The final model with Trusting and Cognitive Reappraisal explained approximately 45% of the variance in the change in depression scores (Adjusted R² = 0.45, F(2, 8) = 5.09, p = 0.037). Although this is a considerable proportion of the variance, the exploratory nature of this analysis, given the small sample size, requires these findings to be viewed as hypothesis-generating for future studies with greater statistical power. The model residuals met the assumptions of normality, homoscedasticity, and absence of autocorrelation.
+
+
+```{r modelo_linear_dep}
+
+dass_d <- lm(dDASS_D ~ dMT + dRR 
+  #+ dMS + dEE + dEP + dMP + dMA
+  , data = df_deltas_g1_final)
+
+summary(dass_d)
+
+ols_step_backward_aic(dass_d)
+ols_step_backward_p(dass_d)
+
+betas_d <- lm.beta(dass_d)$standardized.coefficients
+betas_d
+
+#Residuals normality
+shapiro.test(resid(dass_d)) #p > 0,05 
+#Homoscedasticity
+ols_test_breusch_pagan(dass_d) #p > 0,05 
+#Residual autocorrelations
+durbinWatsonTest(dass_d)   # p > 0,05
+
+dass_d_cnf <- lm(dDASS_D ~ dMT, data = df_deltas_g1_final)
+summary(dass_d_cnf)
+
+dass_d_rc <- lm(dDASS_D ~ dRR, data = df_deltas_g1_final)
+summary(dass_d_rc)
+
+
+```
+
+## **Predictors of Stress**
+
+When examining the linear model with Stress (Delta DASS_Str) as the dependent variable, initially, neither the change in the percentage of adjacent NN intervals differing by more than 50 ms (dHp) (p = 0.130) nor the change in the use of problem-focused coping musical listening (dEP) (p = 0.077) were statistically significant predictors of the change in stress when analyzed in isolation.
+
+However, the final selected model, including both variables, was significant (F(2, 8) = 6.241, p = 0.023) and explained approximately 51% of the variance in the change in stress scores (Adjusted R² = 0.5118). In this model, both dHp and dEP emerged as significant predictors.
+
+Specifically, a greater increase in dHp (indicating an increase in high-frequency heart rate variability, often associated with parasympathetic activity) predicted a greater reduction in stress symptoms (standardized beta coefficient ≈ -0.55, p = 0.038). Additionally, a greater increase in the use of problem-focused coping strategies by listening to music (dEP) also predicted a greater reduction in stress (standardized beta coefficient ≈ -0.61, p = 0.025). The model residuals met the assumptions of normality, homoscedasticity, and absence of autocorrelation.
+
+These exploratory findings, though based on a small sample (N=11), suggest that the music therapy intervention may have influenced stress reduction in the experimental group through mechanisms involving both physiological changes (improvement in parasympathetic modulation) and changes in coping strategies through problem-focused music listening. The fact that these variables gained significance when considered together may indicate that their effects are better understood in each other's presence, possibly due to mutual suppression effects or because they capture complementary facets of the response to the intervention. The relationship between the increase in problem-focused coping and stress reduction, in particular, is interesting and warrants future investigation, especially considering the context of a primarily experiential intervention.
+
+
+```{r}
+dass_s <- lm(dDS ~ dHp + dEP
+             # + dDASS_A + dHL + dMA
+             , data = df_deltas_g1_final)
+summary(dass_s)
+
+ols_step_backward_aic(dass_s)
+ols_step_backward_p(dass_s)
+
+betas_s <- lm.beta(dass_s)$standardized.coefficients
+betas_s
+
+#Normality of residuals 
+shapiro.test(resid(dass_s))
+#Homoscedasticity (Breusch-Pagan test)
+ols_test_breusch_pagan(dass_s)
+#Autocorrelation of residuals (Durbin-Watson test)
+durbinWatsonTest(dass_s)
+
+
+dass_e_pNN <- lm(dDS ~ dHp, data = df_deltas_g1_final)
+summary(dass_e_pNN)
+
+dass_e_ECOM_P <- lm(dDS ~ dEP, data = df_deltas_g1_final)
+summary(dass_e_ECOM_P)
+```
+## **Predictors of Self-Regulation**
+
+In the experimental group , exploratory linear regression analysis, following backward selection, indicated that changes (T2-T1 delta) in the HRV Stress Index (dHM) and in the 'Not Distracting' subscale of the MAIA (dMND) were significant predictors of the change in Interoceptive Self-Regulation (dMS).
+
+The final model was statistically significant (F(2, 8) = 8.347, p = 0.011) and explained approximately 59.5% of the variance in the change in interoceptive self-regulation (Adjusted R² = 0.5951). The model residuals met the assumptions of normality, homoscedasticity, and absence of autocorrelation.
+
+Specifically, a greater increase in the HRV Stress Index (dHS) predicted less improvement (or a worsening) in interoceptive self-regulation (standardized beta coefficient ≈ -0.59, p = 0.019). This finding suggests that an increase in physiological stress may hinder the ability for self-regulation based on bodily sensations.
+
+Interestingly, a greater increase in the ability to 'Not be Distracted' by bodily sensations (dMND) also predicted less improvement (or a worsening) in interoceptive self-regulation (standardized beta coefficient ≈ -0.56, p = 0.025), after controlling for the change in physiological stress. This result might indicate that an increased attention to sensations, without parallel development of other facets of interoception (such as adaptive interpretation or the capacity for emotional regulation based on these sensations, which are more central to 'Self-Regulation'), may not directly translate into better perceived self-regulation, and warrants further investigation.
+
+These findings, though based on a small sample, raise hypotheses about the interrelated mechanisms of physiological and interoceptive change following the music therapy intervention.
+
+
+```{r}
+maia_ar <- lm(dMS ~ dHS + dMND
+              # + dHp + dHP + dEP + dHSD + dHR + dDASS_A
+              , data = df_deltas_g1_final)
+summary(maia_ar)
+
+ols_step_backward_aic(maia_ar)
+ols_step_backward_p(maia_ar)
+
+betas_AR <- lm.beta(maia_ar)$standardized.coefficients
+betas_AR
+
+shapiro.test(resid(maia_ar))
+ols_test_breusch_pagan(maia_ar)
+durbinWatsonTest(maia_ar)
+
+maia_ar_dHS <- lm(dMS ~ dHS, data = df_deltas_g1_final)
+summary(maia_ar_dHS)
+
+maia_ar_MND <- lm(dMS ~ dMND, data = df_deltas_g1_final)
+summary(maia_ar_MND)
+
+  
+```
+
+## **Predictors of Attentional Regulation**
+
+The change in the MAIA Attentional Regulation capacity (dMA) was significantly predicted by changes in the HRV Parasympathetic Index (dHP) and in the capacity to Perceive bodily sensations from the MAIA (dMP). The final model was statistically significant (F(2, 8) = 18.27, p = 0.001) and explained approximately 78% of the variance in the change in attentional regulation (Adjusted R² = 0.7755). The model residuals met the assumptions of normality, homoscedasticity, and absence of autocorrelation.
+
+An improvement in the ability to Perceive bodily sensations (dMP) was a strong positive predictor of improvement in Attentional Regulation (standardized beta coefficient ≈ 0.80, p < 0.001), suggesting that as participants became more aware of their sensations, their ability to regulate attention towards them also increased.
+
+Interestingly, a greater increase in the Parasympathetic Index (dHP) was associated with less improvement (or a slight worsening) in Attentional Regulation (standardized beta coefficient ≈ -0.51, p = 0.010), when controlling for the change in perception. In isolation, the change in the PNS Index was not a significant predictor of change in MAIA Attentional Regulation capacity (p = 0.183). This finding in the multiple model is counterintuitive, as an increase in parasympathetic activity is generally seen as beneficial. **It could indicate that an excessive increase in physiological relaxation, in the context of other interoceptive changes, might paradoxically make it harder to actively direct attention, or that the relationship is more complex and mediated by other unincluded factors**.
+
+These exploratory results, considering the small sample, point towards an intriguing interplay between physiological changes and different facets of interoception. The enhanced ability to perceive sensations seems fundamental for improving attentional regulation, while the role of changes in parasympathetic tone in this specific process of attentional regulation appears more complex than a simple linear positive relationship.
+
+```{r}
+maia_ra <- lm(dMA ~  dHP + dMP 
+              #+ dEP + dRS + dMND + dHRR
+              , data = df_deltas_g1_final)
+
+summary(maia_ra)
+
+ols_step_backward_aic(maia_ra)
+ols_step_backward_p(maia_ra)
+
+betas_AR <- lm.beta(maia_ra)$standardized.coefficients
+betas_AR
+
+#Residuals normality
+shapiro.test(resid(maia_ar)) #p > 0,05 
+#Homoscedasticity
+ols_test_breusch_pagan(maia_ar) #p > 0,05 
+#Residual autocorrelations
+durbinWatsonTest(maia_ar)
+
+MA_HP <- lm(dMA ~  dHP, data = df_deltas_g1_final)
+summary(MA_HP)
+
+MA_MP <- lm(dMA ~  dMP, data = df_deltas_g1_final)
+summary(MA_MP)
+```
+
+
+```{r}
+sessionInfo()
+```
